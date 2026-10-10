@@ -59,15 +59,16 @@ object GamepadInput {
     private const val INVERT_LOOK_Y = false
 
     /** On-screen controls a gamepad input can press. Positions are fractions of the view. */
+    // Positions measured from a gameplay screenshot (1600x720, landscape).
+    // The game has no on-screen aim button, so there is no AIM slot.
     private enum class Slot(val fx: Float, val fy: Float) {
-        FIRE(0.90f, 0.62f),
-        AIM(0.80f, 0.38f),
-        RELOAD(0.92f, 0.82f),
-        KNIFE(0.78f, 0.84f),
-        GRENADE(0.95f, 0.45f),
-        SWITCH_WEAPON(0.70f, 0.60f),
-        ACTION(0.60f, 0.85f),
-        PAUSE(0.97f, 0.05f),
+        FIRE(0.926f, 0.646f),          // crosshair circle, bottom right
+        RELOAD(0.859f, 0.139f),        // shells/ammo icon, top right
+        KNIFE(0.461f, 0.954f),         // knife icon, bottom centre
+        GRENADE(0.922f, 0.414f),       // grenade icon, right side
+        SWITCH_WEAPON(0.891f, 0.042f), // weapon icon, top right
+        ACTION(0.60f, 0.85f),          // buy/open prompt: position not confirmed yet
+        PAUSE(0.016f, 0.049f),         // pause circle, top left
     }
 
     private object Layout {
@@ -75,7 +76,7 @@ object GamepadInput {
         const val MOVE_CX = 0.15f
         const val MOVE_CY = 0.72f
         /** Max drag distance, as a fraction of min(width, height). */
-        const val MOVE_RADIUS = 0.12f
+        const val MOVE_RADIUS = 0.18f
 
         // Look drag: starts at the anchor and wanders inside the region.
         const val LOOK_AX = 0.62f
@@ -88,7 +89,7 @@ object GamepadInput {
 
     private val keyToSlot: Map<Int, Slot> = mapOf(
         KeyEvent.KEYCODE_BUTTON_R2 to Slot.FIRE,
-        KeyEvent.KEYCODE_BUTTON_L2 to Slot.AIM,
+        KeyEvent.KEYCODE_BUTTON_L2 to Slot.FIRE,
         KeyEvent.KEYCODE_BUTTON_R1 to Slot.GRENADE,
         KeyEvent.KEYCODE_BUTTON_L1 to Slot.SWITCH_WEAPON,
         KeyEvent.KEYCODE_BUTTON_A to Slot.ACTION,
@@ -178,7 +179,7 @@ object GamepadInput {
         // Analog triggers (pads report them as LTRIGGER/RTRIGGER or BRAKE/GAS)
         val left = max(event.getAxisValue(MotionEvent.AXIS_LTRIGGER), event.getAxisValue(MotionEvent.AXIS_BRAKE))
         val right = max(event.getAxisValue(MotionEvent.AXIS_RTRIGGER), event.getAxisValue(MotionEvent.AXIS_GAS))
-        updateAxisButton(Slot.AIM, "aL", left)
+        updateAxisButton(Slot.FIRE, "aL", left)
         updateAxisButton(Slot.FIRE, "aR", right)
 
         // D-pad up (hat) -> switch weapon
