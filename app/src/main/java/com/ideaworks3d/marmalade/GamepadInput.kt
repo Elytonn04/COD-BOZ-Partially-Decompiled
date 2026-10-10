@@ -58,6 +58,19 @@ object GamepadInput {
     private const val LOOK_SPEED = 1.1f
     private const val INVERT_LOOK_Y = false
 
+    /** Look stick deadzone: a bit larger, so jitter near the centre doesn't create taps. */
+    private const val LOOK_DEADZONE = 0.25f
+
+    /**
+     * The game reads a short, nearly still touch as a tap (= fire). A fresh look
+     * touch therefore jumps this far (fraction of min(width, height)) in the
+     * stick direction at once, like a real finger starting a drag.
+     */
+    private const val LOOK_BREAKAWAY = 0.035f
+
+    /** Keep the look touch down this long after the stick centres, so quick wiggles don't become taps. */
+    private const val LOOK_RELEASE_DELAY_MS = 150L
+
     /** On-screen controls a gamepad input can press. Positions are fractions of the view. */
     // Positions measured from a gameplay screenshot (1600x720, landscape).
     // The game has no on-screen aim button, so there is no AIM slot.
@@ -79,9 +92,9 @@ object GamepadInput {
         const val MOVE_RADIUS = 0.18f
 
         // Look drag: starts at the anchor and wanders inside the region.
-        const val LOOK_AX = 0.62f
-        const val LOOK_AY = 0.50f
-        const val LOOK_MIN_X = 0.40f
+        const val LOOK_AX = 0.55f
+        const val LOOK_AY = 0.45f
+        const val LOOK_MIN_X = 0.30f
         const val LOOK_MAX_X = 0.80f
         const val LOOK_MIN_Y = 0.15f
         const val LOOK_MAX_Y = 0.85f
@@ -121,13 +134,14 @@ object GamepadInput {
     private var lookStickY = 0f
     private var lookPosX = 0f
     private var lookPosY = 0f
+    private var lookIdleSince = 0L
     private var lastTick = 0L
     private var ticking = false
 
     private val tick = object : Runnable {
         override fun run() {
             updateLook()
-            if (lookStickX != 0f || lookStickY != 0f) {
+            if (lookStickX != 0f || lookStickY != 0f || lookId >= 0) {
                 handler.postDelayed(this, TICK_MS)
             } else {
                 ticking = false
@@ -173,7 +187,8 @@ object GamepadInput {
         updateMove(mx, my)
 
         // Right stick -> look
-        val (rx, ry) = applyDeadzone(event.getAxisValue(MotionEvent.AXIS_Z), event.getAxisValue(MotionEvent.AXIS_RZ))
+        val (rx, ry) = applyDeadzone(
+            event.getAxisValue(MotionEvent.AXIS_Z), event.getAxisValue(MotionEvent.AXIS_RZ), LOOK_DEADZONE)
         setLookStick(rx, ry)
 
         // Analog triggers (pads report them as LTRIGGER/RTRIGGER or BRAKE/GAS)
@@ -206,6 +221,7 @@ object GamepadInput {
         ticking = false
         lookStickX = 0f
         lookStickY = 0f
+        lookIdleSince = 0L
         if (lookId >= 0) { send(lookId, TOUCH_UP, lookPosX.toInt(), lookPosY.toInt()); freeId(lookId); lookId = -1 }
         if (moveId >= 0) { send(moveId, TOUCH_UP, moveX, moveY); freeId(moveId); moveId = -1 }
         for ((slot, id) in slotTouchId) {
@@ -282,8 +298,11 @@ object GamepadInput {
         lookStickX = sx
         lookStickY = if (INVERT_LOOK_Y) -sy else sy
         if (sx == 0f && sy == 0f) {
-            if (lookId >= 0) { send(lookId, TOUCH_UP, lookPosX.toInt(), lookPosY.toInt()); freeId(lookId); lookId = -1 }
-            return
+            if (lookId < 0) return
+            // The touch is lifted by updateLook() after LOOK_RELEASE_DELAY_MS.
+            if (lookIdleSince == 0L) lookIdleSince = SystemClock.uptimeMillis()
+        } else {
+            lookIdleSince = 0L
         }
         if (!ticking) {
             ticking = true
@@ -298,39 +317,71 @@ object GamepadInput {
         val dt = (now - lastTick).coerceIn(1L, 50L) / 1000f
         lastTick = now
 
-        val ax = Layout.LOOK_AX * w
-        val ay = Layout.LOOK_AY * h
+        if (lookStickX == 0f && lookStickY == 0f) {
+            // Stick is centred: lift the finger only after a short grace period.
+            if (lookId >= 0 && lookIdleSince != 0L && now - lookIdleSince >= LOOK_RELEASE_DELAY_MS) {
+                send(lookId, TOUCH_UP, lookPosX.toInt(), lookPosY.toInt())
+                freeId(lookId)
+                lookId = -1
+                lookIdleSince = 0L
+            }
+            return
+        }
+
+        val minX = Layout.LOOK_MIN_X * w
+        val maxX = Layout.LOOK_MAX_X * w
+        val minY = Layout.LOOK_MIN_Y * h
+        val maxY = Layout.LOOK_MAX_Y * h
+
         if (lookId < 0) {
             lookId = allocId()
             if (lookId < 0) return
-            lookPosX = ax
-            lookPosY = ay
-            send(lookId, TOUCH_DOWN, ax.toInt(), ay.toInt())
+            lookPosX = Layout.LOOK_AX * w
+            lookPosY = Layout.LOOK_AY * h
+            send(lookId, TOUCH_DOWN, lookPosX.toInt(), lookPosY.toInt())
+            breakaway(w, h)
         }
 
         val speed = LOOK_SPEED * h
         lookPosX += lookStickX * speed * dt
         lookPosY += lookStickY * speed * dt
 
-        val outside = lookPosX < Layout.LOOK_MIN_X * w || lookPosX > Layout.LOOK_MAX_X * w ||
-            lookPosY < Layout.LOOK_MIN_Y * h || lookPosY > Layout.LOOK_MAX_Y * h
-        if (outside) {
-            // Lift and put the finger back at the anchor so the camera keeps turning.
-            send(lookId, TOUCH_UP, lookPosX.toInt(), lookPosY.toInt())
-            lookPosX = ax
-            lookPosY = ay
-            send(lookId, TOUCH_DOWN, ax.toInt(), ay.toInt())
+        // Out of room: lift the finger and put it down on the opposite side of the
+        // area, so it can keep travelling in the same direction.
+        val margin = 0.03f * min(w, h)
+        var nx = lookPosX
+        var ny = lookPosY
+        var wrapped = false
+        if (nx > maxX) { nx = minX + margin; wrapped = true } else if (nx < minX) { nx = maxX - margin; wrapped = true }
+        if (ny > maxY) { ny = minY + margin; wrapped = true } else if (ny < minY) { ny = maxY - margin; wrapped = true }
+
+        if (wrapped) {
+            send(lookId, TOUCH_UP, lookPosX.coerceIn(minX, maxX).toInt(), lookPosY.coerceIn(minY, maxY).toInt())
+            lookPosX = nx
+            lookPosY = ny
+            send(lookId, TOUCH_DOWN, nx.toInt(), ny.toInt())
+            breakaway(w, h)
         } else {
             send(lookId, TOUCH_MOVE, lookPosX.toInt(), lookPosY.toInt())
         }
     }
 
+    /** Move a freshly placed look finger a few pixels along the stick direction at once. */
+    private fun breakaway(w: Float, h: Float) {
+        val len = hypot(lookStickX, lookStickY)
+        if (len == 0f) return
+        val d = LOOK_BREAKAWAY * min(w, h)
+        lookPosX += lookStickX / len * d
+        lookPosY += lookStickY / len * d
+        send(lookId, TOUCH_MOVE, lookPosX.toInt(), lookPosY.toInt())
+    }
+
     // ------------------------------------------------------------------ helpers
 
-    private fun applyDeadzone(x: Float, y: Float): Pair<Float, Float> {
+    private fun applyDeadzone(x: Float, y: Float, dz: Float = STICK_DEADZONE): Pair<Float, Float> {
         val mag = hypot(x, y)
-        if (mag < STICK_DEADZONE) return Pair(0f, 0f)
-        val scaled = min(1f, (mag - STICK_DEADZONE) / (1f - STICK_DEADZONE))
+        if (mag < dz) return Pair(0f, 0f)
+        val scaled = min(1f, (mag - dz) / (1f - dz))
         return Pair(x / mag * scaled, y / mag * scaled)
     }
 
