@@ -16,7 +16,7 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = rootProject.file(keystoreProperties.getProperty("storeFile", ""))
+            keystoreProperties.getProperty("storeFile")?.let { storeFile = rootProject.file(it) } 
             storePassword = keystoreProperties.getProperty("storePassword", "")
             keyAlias = keystoreProperties.getProperty("keyAlias", "")
             keyPassword = keystoreProperties.getProperty("keyPassword", "")
