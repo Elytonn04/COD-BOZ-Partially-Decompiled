@@ -15,6 +15,15 @@ android {
     }
 
     signingConfigs {
+        // Fixed debug key, so every CI build is signed the same way and installs
+        // over the previous one without uninstalling (which would delete the OBB data).
+        getByName("debug") {
+            storeFile = rootProject.file("ci-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            storeType = "pkcs12"
+        }
         create("release") {
             keystoreProperties.getProperty("storeFile")?.let { storeFile = rootProject.file(it) } 
             storePassword = keystoreProperties.getProperty("storePassword", "")
