@@ -47,6 +47,9 @@ android {
         versionName = "1.0.8.1"
         versionNameSuffix = "kotlin"
         multiDexEnabled = false
+        ndk {
+            abiFilters += listOf("armeabi-v7a")
+        }
     }
 
     buildTypes {
