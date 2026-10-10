@@ -163,6 +163,7 @@ open class LoaderActivity : Activity() {
 
     override fun onPause() {
         trace("XXX onPause XXX")
+        GamepadInput.releaseAll()
         if (isReadyForSuspend(true)) {
             trace("XXX onPause not multi-window XXX")
             m_LoaderThread?.onStop()
@@ -237,8 +238,15 @@ open class LoaderActivity : Activity() {
         m_LoaderThread = LoaderThread.getInstance(this, assets, filesDir, m_View!!)
     }
 
-    override fun dispatchTouchEvent(ev: MotionEvent): Boolean =
-        if (s3eTouchpad.onTouchEvent(ev)) true else super.dispatchTouchEvent(ev)
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        GamepadInput.debugLogTouch(this, ev)
+        return if (s3eTouchpad.onTouchEvent(ev)) true else super.dispatchTouchEvent(ev)
+    }
+
+    // Gamepad sticks/triggers arrive as generic motion events; GamepadInput turns
+    // them into synthetic touches on the HUD.
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean =
+        if (GamepadInput.onGenericMotionEvent(this, ev)) true else super.dispatchGenericMotionEvent(ev)
 
     private fun onKeyEvent(keyCode: Int, action: Int, event: KeyEvent): Boolean {
         trace("onKeyEvent $keyCode")
@@ -252,6 +260,7 @@ open class LoaderActivity : Activity() {
         if (onKeyEvent(keyCode, 0, event)) true else super.onKeyUp(keyCode, event)
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (GamepadInput.onKeyEvent(this, event)) return true
         if (!event.characters.isNullOrEmpty() && event.keyCode == 0) {
             when (event.action) {
                 0 -> onKeyEvent(0, 1, event)
